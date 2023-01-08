@@ -1,0 +1,426 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+	<title>three.js ar - hit test</title>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+	<link type="text/css" rel="stylesheet" href="main.css">
+	<script src="https://ajax.googleapis.com/ajax/libs/jquery/3.5.1/jquery.min.js"></script>
+</head>
+
+<body>
+
+	<script>alert("You can move the 3D objects by clicking on it")</script>
+
+	<div id="content">
+		<div id="mySidenav" class="sidenav">
+			<a href="javascript:void(0)" class="closebtn" onclick="closeNav()">&times;</a>
+			<a class="ar-object" id="1" href="#">Sofa Blue</a>
+			<a class="ar-object" id="2" href="#">Sofa Yellow</a>
+			<a class="ar-object" id="3" href="#">Sofa Big Red</a>
+			<a class="ar-object" id="4" href="#">Stool Steel</a>
+<br>
+			<a class="ar-object" id="4" href="#">Moveable 3D objects</a>
+			<a class="ar-object" id="4" href="#">Normal 3D objects</a>
+
+		</div>
+
+		<div id="container" style="position: fixed;"></div>
+
+		<span style="font-size:30px;cursor:pointer;position: absolute;" onclick="openNav()">&#9776; open</span>
+
+		<button type="button" id="place-button">PLACE</button>
+	</div>
+
+	<script>
+		function openNav() {
+			document.getElementById("mySidenav").style.width = "250px";
+		}
+
+		function closeNav() {
+			document.getElementById("mySidenav").style.width = "0";
+		}
+	</script>
+
+	<script type="module">
+
+		let
+			clickMouse,
+			moveMouse,
+			raycaster,
+			draggableModel;
+
+
+		import * as THREE from './build/three.module.js';
+		import { ARButton } from './jsm/webxr/ARButton.js';
+		import { VRButton } from './jsm/webxr/VRButton.js';
+		//
+		import { OrbitControls } from './jsm/controls/OrbitControls.js';
+		import { GLTFLoader } from './jsm/loaders/GLTFLoader.js';
+		import { RGBELoader } from './jsm/loaders/RGBELoader.js';
+		import { RoughnessMipmapper } from './jsm/utils/RoughnessMipmapper.js';
+		import { DragControls } from './jsm/controls/DragControls.js';
+
+		var container;
+		var camera, scene, renderer;
+		var controller;
+
+		var reticle, pmremGenerator, current_object, controls, isAR, envmap, dControls, objects;
+
+		var hitTestSource = null;
+		var hitTestSourceRequested = false;
+
+		init();
+		animate();
+
+		$(".ar-object").click(function () {
+			// if(current_object != null){
+			// 	scene.remove(current_object);
+			// }
+
+			loadModel($(this).attr("id"));
+		});
+
+		$("#ARButton").click(function () {
+			current_object.visible = false;
+			isAR = true;
+		});
+
+		$("#VRButton").click(function () {
+			scene.background = envmap;
+			scene.position.z = -2;
+		});
+
+		$("#place-button").click(function () {
+			arPlace();
+		});
+
+		function arPlace() {
+			if (reticle.visible) {
+				current_object.position.setFromMatrixPosition(reticle.matrix);
+				current_object.visible = true;
+			}
+		}
+
+
+
+		// RAYCASTING (mouse functionality)
+		raycaster = new THREE.Raycaster();
+		clickMouse = new THREE.Vector2();
+		moveMouse = new THREE.Vector2();
+
+
+
+
+
+		function loadModel(model) {
+
+			new RGBELoader()
+				.setDataType(THREE.UnsignedByteType)
+				.setPath('textures/')
+				.load('photo_studio_01_1k.hdr', function (texture) {
+
+					envmap = pmremGenerator.fromEquirectangular(texture).texture;
+
+					scene.environment = envmap;
+					texture.dispose();
+					pmremGenerator.dispose();
+					render();
+
+
+
+					var loader = new GLTFLoader().setPath('3d/');
+					loader.load(model + ".glb", function (glb) {
+
+						current_object = glb.scene;
+						scene.add(current_object);
+
+						current_object.isDraggable = true;
+						objects = [current_object];
+
+						arPlace();
+
+						var box = new THREE.Box3();
+						box.setFromObject(current_object);
+						box.center(controls.target);
+
+						controls.update();
+						render();
+
+						const geometry4 = new THREE.PlaneGeometry(10, 10, 1, 1);
+						const material4 = new THREE.MeshBasicMaterial({ color: "white" });
+						const plane = new THREE.Mesh(geometry4, material4);
+						// plane.position.set(10,10,10);
+						// plane.scale.set(100,2,100);
+						plane.receiveShadow = true;
+						plane.rotation.x = -Math.PI / 2;
+						scene.add(plane);
+						render();
+
+					});
+				});
+		}
+
+		function init() {
+
+			container = document.createElement('div');
+			document.getElementById("container").appendChild(container);
+
+			scene = new THREE.Scene();
+			window.scene = scene;
+
+			camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.001, 200);
+
+			var directionalLight = new THREE.DirectionalLight(0xdddddd, 1);
+			directionalLight.position.set(0, 0, 1).normalize();
+			scene.add(directionalLight);
+
+			var ambientLight = new THREE.AmbientLight(0x222222);
+			scene.add(ambientLight);
+
+			//
+
+			renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+			renderer.setPixelRatio(window.devicePixelRatio);
+			renderer.setSize(window.innerWidth, window.innerHeight);
+			renderer.xr.enabled = true;
+			container.appendChild(renderer.domElement);
+
+			pmremGenerator = new THREE.PMREMGenerator(renderer);
+			pmremGenerator.compileEquirectangularShader();
+
+			controls = new OrbitControls(camera, renderer.domElement);
+			controls.addEventListener('change', render);
+			controls.minDistance = 2;
+			controls.maxDistance = 10;
+			controls.target.set(0, 0, -0.2);
+			controls.enableDamping = true;
+			controls.dampingFactor = 0.05;
+
+
+
+
+			/**
+			 * Checks if the user is 'holding' and model.
+			 * If true, function updates model's location based on mouse postion
+			 * If false, function does nothing
+			 */
+			function dragModel() {
+				// If 'holding' an model, move the model
+				if (draggableModel) {
+					raycaster.setFromCamera(moveMouse, camera);
+					const found = raycaster.intersectObjects(scene.children);
+					if (found.length > 0) {
+						for (let obj3d of found) {
+							if (!obj3d.object.isDraggablee) {
+								draggableModel.position.x = obj3d.point.x;
+								draggableModel.position.z = obj3d.point.z;
+								break;
+							}
+						}
+					}
+				}
+			}
+
+			// Allows user to pick up and drop models on-click events
+			window.addEventListener("click", (event) => {
+				// If 'holding' model on-click, set container to <undefined> to 'drop' the model.
+				if (draggableModel) {
+					draggableModel = undefined;
+					return;
+				}
+
+				// If NOT 'holding' model on-click, set container to <object> to 'pickup' the model.
+				clickMouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+				clickMouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+				raycaster.setFromCamera(clickMouse, camera);
+				const found = raycaster.intersectObjects(scene.children, true);
+				if (found.length) {
+					// Cycle upwards through every parent until it reaches the topmost layer
+					// This top layer is the group created by the GLTFLoader function
+					let current = found[0].object;
+					while (current.parent.parent !== null) {
+						current = current.parent;
+					}
+					if (current.isDraggable) {
+						draggableModel = current;
+					}
+				}
+			});
+
+			// Constantly updates the mouse location for use in `dragModel()`
+			window.addEventListener("mousemove", (event) => {
+				dragModel(); // Updates the model's postion everytime the mouse moves
+				moveMouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+				moveMouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+			});
+
+
+
+
+
+			//VR SETUP
+			document.body.appendChild(VRButton.createButton(renderer));
+
+			//AR SETUP
+
+			let options = {
+				requiredFeatures: ['hit-test'],
+				optionalFeatures: ['dom-overlay'],
+			}
+
+			options.domOverlay = { root: document.getElementById('content') };
+
+			document.body.appendChild(ARButton.createButton(renderer, options));
+
+			// document.body.appendChild( ARButton.createButton( renderer, { requiredFeatures: [ 'hit-test' ] } ) );
+
+			//
+
+			reticle = new THREE.Mesh(
+				new THREE.RingBufferGeometry(0.15, 0.2, 32).rotateX(- Math.PI / 2),
+				new THREE.MeshBasicMaterial()
+			);
+			reticle.matrixAutoUpdate = false;
+			reticle.visible = false;
+			scene.add(reticle);
+
+			//
+
+			window.addEventListener('resize', onWindowResize, false);
+
+			renderer.domElement.addEventListener('touchstart', function (e) {
+				e.preventDefault();
+				touchDown = true;
+				touchX = e.touches[0].pageX;
+				touchY = e.touches[0].pageY;
+			}, false);
+
+			renderer.domElement.addEventListener('touchend', function (e) {
+				e.preventDefault();
+				touchDown = false;
+			}, false);
+
+			renderer.domElement.addEventListener('touchmove', function (e) {
+				e.preventDefault();
+
+				if (!touchDown) {
+					return;
+				}
+
+				deltaX = e.touches[0].pageX - touchX;
+				deltaY = e.touches[0].pageY - touchY;
+				touchX = e.touches[0].pageX;
+				touchY = e.touches[0].pageY;
+
+				rotateObject();
+
+			}, false);
+
+		}
+
+		var touchDown, touchX, touchY, deltaX, deltaY;
+
+		function rotateObject() {
+			if (current_object && reticle.visible) {
+				current_object.rotation.y += deltaX / 100;
+			}
+		}
+
+		function onWindowResize() {
+
+			camera.aspect = window.innerWidth / window.innerHeight;
+			camera.updateProjectionMatrix();
+
+			renderer.setSize(window.innerWidth, window.innerHeight);
+
+		}
+
+		//
+
+		function animate() {
+
+			renderer.setAnimationLoop(render);
+			requestAnimationFrame(animate);
+			controls.update();
+
+		}
+
+		function render(timestamp, frame) {
+
+			if (frame && isAR) {
+
+				var referenceSpace = renderer.xr.getReferenceSpace();
+				var session = renderer.xr.getSession();
+
+				if (hitTestSourceRequested === false) {
+
+					session.requestReferenceSpace('viewer').then(function (referenceSpace) {
+
+						session.requestHitTestSource({ space: referenceSpace }).then(function (source) {
+
+							hitTestSource = source;
+
+						});
+
+					});
+
+					session.addEventListener('end', function () {
+
+						hitTestSourceRequested = false;
+						hitTestSource = null;
+
+						isAR = false;
+
+						reticle.visible = false;
+
+						var box = new THREE.Box3();
+						box.setFromObject(current_object);
+						box.center(controls.target);
+
+						document.getElementById("place-button").style.display = "none";
+
+					});
+
+					hitTestSourceRequested = true;
+
+				}
+
+				if (hitTestSource) {
+
+					var hitTestResults = frame.getHitTestResults(hitTestSource);
+
+					if (hitTestResults.length) {
+
+						var hit = hitTestResults[0];
+
+						document.getElementById("place-button").style.display = "block";
+
+						reticle.visible = true;
+						reticle.matrix.fromArray(hit.getPose(referenceSpace).transform.matrix);
+
+					} else {
+
+						reticle.visible = false;
+
+						document.getElementById("place-button").style.display = "none";
+
+					}
+
+				}
+
+			}
+
+			renderer.render(scene, camera);
+
+		}
+
+	</script>
+</body>
+
+</html>
+
+
+
+<!-- https://codesandbox.io/s/jq963 -->
